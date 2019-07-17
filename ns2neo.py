@@ -1,12 +1,13 @@
-#!/usr/bin/python3
+#!/usr/bin/env python
 
+from neo4j import GraphDatabase
 import argparse
 import re
 import time
-from neo4j import GraphDatabase
 
-uri = bolt://localhost:7687
-driver = GraphDatabase.driver(uri, auth=("neo4j", "password"))
+
+uri = "bolt://localhost:7687"
+driver = GraphDatabase.driver(uri, auth=("neo4j", "test"))
 
 Sources = {}
 
@@ -20,6 +21,9 @@ args = parser.parse_args()
 def parsefilename(filename):
     return filename.split('/')[-2]
 
+for arg in vars(args):
+    files = getattr(args, arg)
+
 for arg in files:
     netstatlines = []
     with open(arg, 'r') as f:
@@ -28,9 +32,10 @@ for arg in files:
     # Strip headings from netstat output
     netstatlines = netstatlines.split('\n')[2:-1]
     for l in netstatlines:
-        (proto, recvq, sendq, local, remote, state, pid) = l.split()[:7]
-        if "LISTEN" in state:
-            continue
+        if "tcp" in l.split()[0]:
+            (proto, recvq, sendq, local, remote, state, pid) = l.split()[:7]
+        elif "udp" in l.split()[0]:
+            (proto, recvq, sendq, local, remote, state, pid) = l.split()[:4], None, l.split()[6]
 
         pid = pid.split('/')
         if pid[0] == '-':
@@ -54,13 +59,13 @@ for arg in files:
         if src not in Sources.keys():
             Sources[src] = []
         if dst not in Sources[src]:
-            query = "MATCH (A:COMPUTER {Name \"" + src + "\"}), (B:COPMPUTER {Name: \"" + dst + "\"}) CREATE (A)-[:COMPUTER]->(B)"
+            query = "MATCH (A:COMPUTER {Name: \"" + src + "\"}), (B:COMPUTER {Name: \"" + dst + "\"}) CREATE (A)-[:Connects_to]->(B)"
 
         with driver.session() as session:
             session.run(query)
             Sources[src].append(dst)
             session.close()
 
-        time.sleep(1)
+        time.sleep(0.1)
 
         print(query)

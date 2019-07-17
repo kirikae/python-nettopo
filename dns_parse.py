@@ -3,11 +3,11 @@
 from copy import copy
 from neo4j import GraphDatabase
 
-uri = bolt://localhost:7687
-driver = GraphDatabase.driver(uri, auth=("neo4j", "password"))
+uri = "bolt://localhost:7687"
+driver = GraphDatabase.driver(uri, auth=("neo4j", "test"))
 
 hosts = []
-with open("sorted_dns_resolve.list", 'r') as dnsList:
+with open("dns_resolved.list", 'r') as dnsList:
     for line in dnsList:
         host = {}
         host["address"] = line.split(" ")[0]
