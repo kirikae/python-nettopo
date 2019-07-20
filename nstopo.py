@@ -13,7 +13,7 @@ Sources = {}
 parser = argparse.ArgumentParser(
     description = "netstat output files to graph"
 )
-parser.add_argument('--inputs', nargs='*')
+parser.add_argument('-f', nargs='*')
 
 args = parser.parse_args()
 
