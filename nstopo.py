@@ -23,17 +23,18 @@ parser.add_argument('--files', '-f', nargs='+', help='Pass the File or Files to 
 args = parser.parse_args()
 
 for arg in vars(args):
-    filenamess = getattr(args, arg)
+    filenames = getattr(args, arg)
 
 def main():
     Connection = namedtuple('Connection', ['proto', 'recvq', 'sendq', 'localaddr', 'localport', 'remoteaddr', 'remoteport', 'state', 'pid', 'program'])
-    all_conections = []
+    all_connections = []
 
     for File in filenames:
         print("Reading in file: ",File)
         with open(File, 'r') as f:
             for line in f:
                 current_line = line.split()
+                print(current_line)
                 if current_line[0] == "tcp":
                     (proto, recvq, sendq, local, remote, state, pidprog) = current_line
                 elif current_line[0] == "udp":
@@ -53,6 +54,8 @@ def main():
                 (remoteaddr, remoteport) = remote.split(':')[:2]
 
                 current_connection = Connection(proto, recvq, sendq, localaddr, localport, remoteaddr, remoteport, state, pid, program)
+                all_connections.append(current_connection)
+
         print("Finished with :", File)
 
     alladdrs = set()
@@ -67,7 +70,7 @@ def main():
         alladdrs.add(conn.localaddr)
         alladdrs.add(conn.remoteaddr)
         localconns.add(conn.localaddr)
-        remotecons.add(conn.remoteaddr)
+        remoteconns.add(conn.remoteaddr)
         allprograms.add(conn.program)
 
     for host in alladdrs:
@@ -88,19 +91,21 @@ def main():
             session.run(add_program)
             session.close()
 
-
     for conn in all_connections:
         if conn.localaddr not in Sources.keys():
             Sources[conn.localaddr] = []
         if conn.remoteaddr not in Sources[conn.localaddr]:
             add_app_relationship = "MATCH (A:COMPUTER {IP: \"" + conn.localaddr + "\"}),(B:PROGRAM {Name: \"" + conn.program + "\"}),(C:COMPUTER {IP: \"" + conn.remoteaddr + "\"}) CREATE (A)-[:RUNS]->(B)"
-            add_hosts_relationship = "MATCH (A:COMPUTER {IP: \"" + conn.localaddr + "\"}),(B:PROGRAM {Name: \"" + conn.program + "\"}),(C:COMPUTER {IP: \"" + conn.remoteaddr + "\"}) CREATE (B)-[:CONNECTS_TO {Local_Port: \"" + conn.localport + "\", Remote_Port: \"" + con.remoteport + "\", Protocol: \"" + conn.proto + "\", State: \"" + conn.state + "\"}]->(C)"
+            add_host_relationship = "MATCH (A:COMPUTER {IP: \"" + conn.localaddr + "\"}),(B:PROGRAM {Name: \"" + conn.program + "\"}),(C:COMPUTER {IP: \"" + conn.remoteaddr + "\"}) CREATE (B)-[:CONNECTS_TO {Local_Port: \"" + conn.localport + "\", Remote_Port: \"" + conn.remoteport + "\", Protocol: \"" + conn.proto + "\", State: \"" + conn.state + "\"}]->(C)"
 
             with driver.session() as session:
                 session.run(add_app_relationship)
                 session.run(add_host_relationship)
                 Sources[conn.localaddr].append(conn.remoteaddr)
                 session.close()
+
+        print(add_app_relationship)
+        print(add_host_relationship)
 
 
 if __name__ == '__main__':
