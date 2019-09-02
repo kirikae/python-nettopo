@@ -75,7 +75,7 @@ def main():
             name = socket.gethostbyaddr(host)[0]
         except:
             name = "UNKNOWN"
-        add_host = "CREATE (A:COMPUTER {IP: \"" + host + "\", FQDN: \"" + name "\"})"
+        add_host = "CREATE (A:COMPUTER {IP: \"" + host + "\", FQDN: \"" + name + "\"})"
 
         with driver.session() as session:
             session.run(add_host)
