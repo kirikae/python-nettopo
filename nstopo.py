@@ -2,9 +2,17 @@
 
 import socket
 import argparse
+import os
+
 from getpass import getpass
 from collections import namedtuple
 from neo4j import GraphDatabase
+
+
+import logging
+
+logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', level=logging.INFO)
+
 
 ##########################
 # Create namedtuples used
@@ -16,6 +24,11 @@ Host = namedtuple('Host', ['hostname', 'ipaddr'])
 # Constants
 # ------------------------
 URI = "bolt://localhost:7687"
+# overwrite if a host is specified
+if "NEO4J_HOST" in os.environ.keys():
+    logging.info("Using NEO4J hostname from ENV")
+    URI = os.environ.get("NEO4J_HOST")
+
 
 
 ##########################
@@ -25,32 +38,62 @@ parser = argparse.ArgumentParser(
     description = "Parse Netstat output files and import them into Neo4j Graph Database"
     )
 parser.add_argument('--files', '-f', nargs='+', help='Pass the File or Files to analyse')
+parser.add_argument('--n4j-user', '-u', help='neo4j User Name', default=os.environ.get("NEO4J_USER"))
+parser.add_argument('--n4j-pass', '-p', help='neo4j Password', default=os.environ.get("NEO4J_PASS"))
 args = parser.parse_args()
-for arg in vars(args):
-    filenames = getattr(args, arg)
+
+if args.files is None or len(args.files) == 0:
+    raise Exception("No input files specified.")
+
+if args.n4j_user is None:
+    neo4jusername = input("Neo4j username: ")
+else:
+    neo4jusername = args.n4j_user
+
+if args.n4j_pass is None:
+    neo4jpassword = getpass("Neo4j password: ")
+else:
+    neo4jpassword = args.n4j_pass
+
+filenames = args.files
+
+# Check some silly assumptions.
+assert len(filenames) > 0
+assert neo4jusername is not None and neo4jusername != ""
+assert neo4jpassword is not None and neo4jpassword != ""
 
 # Create driver for neo4j:
-# TODO: Allow these to be parsed in from args or ENV
-neo4jusername = input("Neo4j username: ")
-neo4jpassword = getpass("Neo4j password: ")
 driver = GraphDatabase.driver(URI, auth=(neo4jusername, neo4jpassword))
 
 class N4JQueue(set):
+    """
+    This class provides a small amount of smarts on top of a basic set in Python.
+    Once the nominated buffer size is reached, the entire contents of the set
+    are placed into the database using the specified driver.
+
+    """
     def __init__(self, driver: GraphDatabase.driver, buffer_size: int = 10000):
         self._driver = driver
         self._buffer_size = buffer_size
 
     def submit(self):
+        """
+        Submits the entire contents of self to the database, removing items that were correctly submitted.
+        :return:
+        """
+        done_items = set()
         with self._driver.session() as session:
             for item in self:
                 try:
                     session.run(item)
-                    self.remove(item)
+                    done_items.add(item)
                 except Exception as e:
-                    print("Issue with submitting or removing item: {}".format(e))
+                    logging.exception(e)
+
+            self = self - done_items
 
     def add(self, element) -> None:
-        super().add(element= element)
+        super().add(element)
 
         if len(self) >= self._buffer_size:
             self.submit()
@@ -93,13 +136,17 @@ def main():
 
     n4j_queue = N4JQueue(driver, buffer_size=10000)
 
+    # Clear the current DB
+    with driver.session() as session:
+        session.run("MATCH (n) DETACH DELETE n")
+
     # First, we read this into an array, parsing as we go.
     for file in filenames:
-        print("Reading in file: ",file)
+        logging.info(f"Reading in file: {file}")
         with open(file, 'r') as f:
             for line in f:
                 current_line = line.split()
-                print(current_line)
+                logging.debug(current_line)
                 if current_line[0] == "tcp":
                     (proto, recvq, sendq, local, remote, state, pidprog) = current_line
                 elif current_line[0] == "udp":
@@ -121,7 +168,7 @@ def main():
                 current_connection = Connection(proto, recvq, sendq, localaddr, localport, remoteaddr, remoteport, state, pid, program)
                 all_connections.append(current_connection)
 
-        print("Finished with :", file)
+        logging.info(f"Finished with: {file}")
 
     # Create working Sets
     all_addresses = set()
@@ -136,22 +183,27 @@ def main():
         remote_connections.add(conn.remoteaddr)
         all_programs.add(conn.program)
 
-    print("Connections loaded.")
+    logging.info("Connections loaded.")
 
     for host in all_addresses:
         try:
+            logging.debug(f"Looking up DNS for: {host}.")
             name = dns_lookup.get_host_by_address(host)
-        except:
+        except socket.herror:
             name = "UNKNOWN"
+        except Exception as e:
+            logging.error(f"Error looking up DNS for {host}.")
+            logging.exception(e)
+            raise e
 
-        add_host_str = 'CREATE (A:COMPUTER {IP: "{}", FQDN: "{}"})'.format(host, name)
+        add_host_str = f'CREATE (A:COMPUTER {{IP: "{host}", FQDN: "{name}"}})'
         n4j_queue.add(add_host_str)
-    print("Hosts loaded.")
+    logging.info("Hosts loaded.")
 
     for program in all_programs:
-        add_program = 'CREATE (A:PROGRAM {Name: "{}"})'.format(program)
+        add_program = f'CREATE (A:PROGRAM {{Name: "{program}"}})'
         n4j_queue.add(add_program)
-    print("Programs loaded.")
+    logging.info("Programs loaded.")
 
     for conn in all_connections:
     for index, conn in enumerate(all_connections):
@@ -176,7 +228,9 @@ def main():
             sources[conn.localaddr].append(conn.remoteaddr)
 
     ProgressBar("Relationships:", index, len(all_connections)-1)
-    print("Relationships have been made.")
+            logging.debug(add_app_relationship)
+            logging.debug(add_host_relationship)
+    logging.info("Connections loaded.")
 
     # Write remaining contents of the buffer.
     n4j_queue.submit()
