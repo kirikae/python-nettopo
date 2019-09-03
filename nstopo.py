@@ -205,7 +205,6 @@ def main():
         n4j_queue.add(add_program)
     logging.info("Programs loaded.")
 
-    for conn in all_connections:
     for index, conn in enumerate(all_connections):
         if conn.localaddr not in sources.keys():
             sources[conn.localaddr] = []
@@ -227,7 +226,6 @@ def main():
 
             sources[conn.localaddr].append(conn.remoteaddr)
 
-    ProgressBar("Relationships:", index, len(all_connections)-1)
             logging.debug(add_app_relationship)
             logging.debug(add_host_relationship)
     logging.info("Connections loaded.")
