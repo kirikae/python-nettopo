@@ -24,7 +24,7 @@ Host = namedtuple('Host', ['hostname', 'ipaddr'])
 ##########################
 # Constants
 # ------------------------
-ENABLE_DNS = True
+ENABLE_DNS = False
 
 
 URI = "bolt://localhost:7687"
@@ -117,7 +117,8 @@ class CachedDNSLookup:
         return self._cache[addr]
 
 def escape_strings(in_string) -> str:
-    return in_string.replace(".", "_").replace(":","|")
+    replaced_str = in_string.replace(".", "_").replace(":","|")
+    return f"A_{replaced_str}"
 
 def main():
     """
@@ -197,7 +198,7 @@ def main():
             logging.exception(e)
             raise e
 
-        add_host_str = f'CREATE (A:COMPUTER {{IP: "{escape_strings(host)}", FQDN: "{escape_strings(name)}"}})'
+        add_host_str = f'CREATE ({escape_strings(host)}:COMPUTER {{IP: "{host}", FQDN: "{name}"}})'
         n4j_queue.add(add_host_str)
 
     n4j_queue.submit()
@@ -214,13 +215,13 @@ def main():
         if conn.localaddr not in sources.keys():
             sources[conn.localaddr] = []
         if conn.remoteaddr not in sources[conn.localaddr]:
-            add_app_relationship =  f'MATCH (A:COMPUTER {{IP: "{escape_strings(conn.localaddr)}"}}),'\
+            add_app_relationship =  f'MATCH (A:COMPUTER {{IP: "{conn.localaddr}"}}),'\
                                     f'(B:PROGRAM {{Name: "{conn.program}"}}),'\
-                                    f'(C:COMPUTER {{IP: "{escape_strings(conn.remoteaddr)}"}}) CREATE (A)-[:RUNS]->(B)'
+                                    f'(C:COMPUTER {{IP: "{conn.remoteaddr}"}}) CREATE (A)-[:RUNS]->(B)'
 
-            add_host_relationship = f'MATCH (A:COMPUTER {{IP: "{escape_strings(conn.localaddr)}"}}),'\
+            add_host_relationship = f'MATCH (A:COMPUTER {{IP: "{conn.localaddr}"}}),'\
                                     f'(B:PROGRAM {{Name: "{conn.program}"}}),'\
-                                    f'(C:COMPUTER {{IP: "{escape_strings(conn.remoteaddr)}"}}) '\
+                                    f'(C:COMPUTER {{IP: "{conn.remoteaddr}"}}) '\
                                     f'CREATE (B)-[:CONNECTS_TO {{Local_Port: "{conn.localport}", '\
                                     f'Remote_Port: "{conn.remoteport}", '\
                                     f'Protocol: "{conn.proto}", '\
