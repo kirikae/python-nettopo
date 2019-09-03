@@ -14,6 +14,7 @@ import logging
 logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', level=logging.INFO)
 
 
+
 ##########################
 # Create namedtuples used
 # ------------------------
@@ -23,6 +24,9 @@ Host = namedtuple('Host', ['hostname', 'ipaddr'])
 ##########################
 # Constants
 # ------------------------
+ENABLE_DNS = True
+
+
 URI = "bolt://localhost:7687"
 # overwrite if a host is specified
 if "NEO4J_HOST" in os.environ.keys():
@@ -90,7 +94,8 @@ class N4JQueue(set):
                 except Exception as e:
                     logging.exception(e)
 
-            self = self - done_items
+            for item in done_items:
+                self.remove(item)
 
     def add(self, element) -> None:
         super().add(element)
@@ -107,9 +112,12 @@ class CachedDNSLookup:
 
     def get_host_by_address(self, addr):
         if addr not in self._cache.keys():
+            logging.info(f"Looking up DNS for: {addr}.")
             self._cache[addr] = socket.gethostbyaddr(addr)[0]
         return self._cache[addr]
 
+def escape_strings(in_string) -> str:
+    return in_string.replace(".", "_").replace(":","|")
 
 def main():
     """
@@ -156,7 +164,7 @@ def main():
                 current_connection = Connection(proto, recvq, sendq, localaddr, localport, remoteaddr, remoteport, state, pid, program)
                 all_connections.append(current_connection)
 
-        logging.info(f"Finished with: {file}")
+        logging.info(f"Finished with: {file}. {len(all_connections)} now loaded.")
 
     # Create working Sets
     all_addresses = set()
@@ -171,39 +179,48 @@ def main():
         remote_connections.add(conn.remoteaddr)
         all_programs.add(conn.program)
 
-    logging.info("Connections loaded.")
+    logging.info(f"Connections loaded. {len(all_addresses)} addresses, "\
+                 f"{len(local_connection)} local connections, "\
+                 f"{len(local_connection)} remote connections, "\
+                 f"{len(all_programs)} programs.")
 
     for host in all_addresses:
         try:
-            logging.debug(f"Looking up DNS for: {host}.")
-            name = dns_lookup.get_host_by_address(host)
+            if ENABLE_DNS:
+                name = dns_lookup.get_host_by_address(host)
+            else:
+                name = host
         except socket.herror:
-            name = "UNKNOWN"
+            name = host
         except Exception as e:
             logging.error(f"Error looking up DNS for {host}.")
             logging.exception(e)
             raise e
 
-        add_host_str = f'CREATE (A:COMPUTER {{IP: "{host}", FQDN: "{name}"}})'
+        add_host_str = f'CREATE (A:COMPUTER {{IP: "{escape_strings(host)}", FQDN: "{escape_strings(name)}"}})'
         n4j_queue.add(add_host_str)
+
+    n4j_queue.submit()
     logging.info("Hosts loaded.")
 
     for program in all_programs:
         add_program = f'CREATE (A:PROGRAM {{Name: "{program}"}})'
         n4j_queue.add(add_program)
+
+    n4j_queue.submit()
     logging.info("Programs loaded.")
 
     for conn in all_connections:
         if conn.localaddr not in sources.keys():
             sources[conn.localaddr] = []
         if conn.remoteaddr not in sources[conn.localaddr]:
-            add_app_relationship =  f'MATCH (A:COMPUTER {{IP: "{conn.localaddr}"}}),'\
+            add_app_relationship =  f'MATCH (A:COMPUTER {{IP: "{escape_strings(conn.localaddr)}"}}),'\
                                     f'(B:PROGRAM {{Name: "{conn.program}"}}),'\
-                                    f'(C:COMPUTER {{IP: "{conn.remoteaddr}"}}) CREATE (A)-[:RUNS]->(B)'
+                                    f'(C:COMPUTER {{IP: "{escape_strings(conn.remoteaddr)}"}}) CREATE (A)-[:RUNS]->(B)'
 
-            add_host_relationship = f'MATCH (A:COMPUTER {{IP: "{conn.localaddr}"}}),'\
+            add_host_relationship = f'MATCH (A:COMPUTER {{IP: "{escape_strings(conn.localaddr)}"}}),'\
                                     f'(B:PROGRAM {{Name: "{conn.program}"}}),'\
-                                    f'(C:COMPUTER {{IP: "{conn.remoteaddr}"}}) '\
+                                    f'(C:COMPUTER {{IP: "{escape_strings(conn.remoteaddr)}"}}) '\
                                     f'CREATE (B)-[:CONNECTS_TO {{Local_Port: "{conn.localport}", '\
                                     f'Remote_Port: "{conn.remoteport}", '\
                                     f'Protocol: "{conn.proto}", '\
@@ -212,10 +229,8 @@ def main():
             n4j_queue.add(add_app_relationship)
             n4j_queue.add(add_host_relationship)
 
-            sources[conn.localaddr].append(conn.remoteaddr)
 
-            logging.debug(add_app_relationship)
-            logging.debug(add_host_relationship)
+            sources[conn.localaddr].append(conn.remoteaddr)
     logging.info("Connections loaded.")
 
     # Write remaining contents of the buffer.
