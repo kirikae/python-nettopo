@@ -8,10 +8,13 @@ from getpass import getpass
 from collections import namedtuple
 from neo4j import GraphDatabase
 
+from collections import  Counter
+
 
 import logging
 
 logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', level=logging.INFO)
+
 
 
 ##########################
@@ -23,6 +26,9 @@ Host = namedtuple('Host', ['hostname', 'ipaddr'])
 ##########################
 # Constants
 # ------------------------
+ENABLE_DNS = False
+
+
 URI = "bolt://localhost:7687"
 # overwrite if a host is specified
 if "NEO4J_HOST" in os.environ.keys():
@@ -90,7 +96,8 @@ class N4JQueue(set):
                 except Exception as e:
                     logging.exception(e)
 
-            self = self - done_items
+            for item in done_items:
+                self.remove(item)
 
     def add(self, element) -> None:
         super().add(element)
@@ -107,21 +114,13 @@ class CachedDNSLookup:
 
     def get_host_by_address(self, addr):
         if addr not in self._cache.keys():
+            logging.info(f"Looking up DNS for: {addr}.")
             self._cache[addr] = socket.gethostbyaddr(addr)[0]
         return self._cache[addr]
 
-def ProgressBar(value, endvalue, bar_length = 50):
-    """
-    Show a progress bar for an iteration
-    Use something like:
-    ProgressBar(index, len(item)-1)
-    """
-    percent = float(value) / endvalue
-    arrow = '-' * int(round(percent * bar_length)-1) + '>'
-    spaces = ' ' * (bar_length - len(arrow))
-
-    # TODO: Change this to display at least 2 decimal places
-    print("\r{0}: [{1}] {2}%".format(arrow + spaces, int(round(percent * 100))))
+def escape_strings(in_string) -> str:
+    replaced_str = in_string.replace(".", "_").replace(":","|")
+    return f"A_{replaced_str}"
 
 def main():
     """
@@ -168,7 +167,7 @@ def main():
                 current_connection = Connection(proto, recvq, sendq, localaddr, localport, remoteaddr, remoteport, state, pid, program)
                 all_connections.append(current_connection)
 
-        logging.info(f"Finished with: {file}")
+        logging.info(f"Finished with: {file}. {len(all_connections)} now loaded.")
 
     # Create working Sets
     all_addresses = set()
@@ -183,36 +182,45 @@ def main():
         remote_connections.add(conn.remoteaddr)
         all_programs.add(conn.program)
 
-    logging.info("Connections loaded.")
+    logging.info(f"Connections loaded. {len(all_addresses)} addresses, "\
+                 f"{len(local_connection)} local connections, "\
+                 f"{len(local_connection)} remote connections, "\
+                 f"{len(all_programs)} programs.")
 
     for host in all_addresses:
         try:
-            logging.debug(f"Looking up DNS for: {host}.")
-            name = dns_lookup.get_host_by_address(host)
+            if ENABLE_DNS:
+                name = dns_lookup.get_host_by_address(host)
+            else:
+                name = host
         except socket.herror:
-            name = "UNKNOWN"
+            name = host
         except Exception as e:
             logging.error(f"Error looking up DNS for {host}.")
             logging.exception(e)
             raise e
 
-        add_host_str = f'CREATE (A:COMPUTER {{IP: "{host}", FQDN: "{name}"}})'
+        add_host_str = f'CREATE ({escape_strings(host)}:COMPUTER {{IP: "{host}", FQDN: "{name}"}})'
         n4j_queue.add(add_host_str)
+
+    n4j_queue.submit()
     logging.info("Hosts loaded.")
 
     for program in all_programs:
         add_program = f'CREATE (A:PROGRAM {{Name: "{program}"}})'
         n4j_queue.add(add_program)
+
+    n4j_queue.submit()
     logging.info("Programs loaded.")
+
+    app_relationship_counter = Counter()
 
     for conn in all_connections:
     for index, conn in enumerate(all_connections):
         if conn.localaddr not in sources.keys():
             sources[conn.localaddr] = []
         if conn.remoteaddr not in sources[conn.localaddr]:
-            add_app_relationship =  f'MATCH (A:COMPUTER {{IP: "{conn.localaddr}"}}),'\
-                                    f'(B:PROGRAM {{Name: "{conn.program}"}}),'\
-                                    f'(C:COMPUTER {{IP: "{conn.remoteaddr}"}}) CREATE (A)-[:RUNS]->(B)'
+            app_relationship_counter[(conn.localaddr, conn.program)] += 1
 
             add_host_relationship = f'MATCH (A:COMPUTER {{IP: "{conn.localaddr}"}}),'\
                                     f'(B:PROGRAM {{Name: "{conn.program}"}}),'\
@@ -222,15 +230,22 @@ def main():
                                     f'Protocol: "{conn.proto}", '\
                                     f'State: "{conn.state}"}}]->(C)'
 
-            n4j_queue.add(add_app_relationship)
             n4j_queue.add(add_host_relationship)
 
-            sources[conn.localaddr].append(conn.remoteaddr)
 
-    ProgressBar("Relationships:", index, len(all_connections)-1)
-            logging.debug(add_app_relationship)
-            logging.debug(add_host_relationship)
+            sources[conn.localaddr].append(conn.remoteaddr)
     logging.info("Connections loaded.")
+
+    # Now we build the app relationships using total counts of number of times encountered.
+    for conn_tuple in app_relationship_counter.keys():
+        (conn_localaddr, conn_program) = conn_tuple
+        conn_count = app_relationship_counter[conn_tuple]
+
+        add_app_relationship =  f'MATCH (A:COMPUTER {{IP: "{conn_localaddr}"}}),'\
+                                f'(B:PROGRAM {{Name: "{conn_program}"}})'\
+                                f'CREATE (A)-[:RUNS {{Count: "{conn_count}"}}]->(B) '
+
+        n4j_queue.add(add_app_relationship)
 
     # Write remaining contents of the buffer.
     n4j_queue.submit()
