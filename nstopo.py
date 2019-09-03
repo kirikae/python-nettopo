@@ -8,6 +8,8 @@ from getpass import getpass
 from collections import namedtuple
 from neo4j import GraphDatabase
 
+from collections import  Counter
+
 
 import logging
 
@@ -211,13 +213,13 @@ def main():
     n4j_queue.submit()
     logging.info("Programs loaded.")
 
+    app_relationship_counter = Counter()
+
     for conn in all_connections:
         if conn.localaddr not in sources.keys():
             sources[conn.localaddr] = []
         if conn.remoteaddr not in sources[conn.localaddr]:
-            add_app_relationship =  f'MATCH (A:COMPUTER {{IP: "{conn.localaddr}"}}),'\
-                                    f'(B:PROGRAM {{Name: "{conn.program}"}}),'\
-                                    f'(C:COMPUTER {{IP: "{conn.remoteaddr}"}}) CREATE (A)-[:RUNS]->(B)'
+            app_relationship_counter[(conn.localaddr, conn.program)] += 1
 
             add_host_relationship = f'MATCH (A:COMPUTER {{IP: "{conn.localaddr}"}}),'\
                                     f'(B:PROGRAM {{Name: "{conn.program}"}}),'\
@@ -227,12 +229,22 @@ def main():
                                     f'Protocol: "{conn.proto}", '\
                                     f'State: "{conn.state}"}}]->(C)'
 
-            n4j_queue.add(add_app_relationship)
             n4j_queue.add(add_host_relationship)
 
 
             sources[conn.localaddr].append(conn.remoteaddr)
     logging.info("Connections loaded.")
+
+    # Now we build the app relationships using total counts of number of times encountered.
+    for conn_tuple in app_relationship_counter.keys():
+        (conn_localaddr, conn_program) = conn_tuple
+        conn_count = app_relationship_counter[conn_tuple]
+
+        add_app_relationship =  f'MATCH (A:COMPUTER {{IP: "{conn_localaddr}"}}),'\
+                                f'(B:PROGRAM {{Name: "{conn_program}"}})'\
+                                f'CREATE (A)-[:RUNS {{Count: "{conn_count}"}}]->(B) '
+
+        n4j_queue.add(add_app_relationship)
 
     # Write remaining contents of the buffer.
     n4j_queue.submit()
