@@ -67,6 +67,18 @@ class CachedDNSLookup:
             self._cache[addr] = socket.gethostbyaddr(addr)[0]
         return self._cache[addr]
 
+def ProgressBar(value, endvalue, bar_length = 50):
+    """
+    Show a progress bar for an iteration
+    Use something like:
+    ProgressBar(index, len(item)-1)
+    """
+    percent = float(value) / endvalue
+    arrow = '-' * int(round(percent * bar_length)-1) + '>'
+    spaces = ' ' * (bar_length - len(arrow))
+
+    # TODO: Change this to display at least 2 decimal places
+    print("\rPercent: [{0}] {1}%".format(arrow + spaces, int(round(percent * 100))))
 
 def main():
     """
@@ -142,6 +154,7 @@ def main():
     print("Programs loaded.")
 
     for conn in all_connections:
+    for index, conn in enumerate(all_connections):
         if conn.localaddr not in sources.keys():
             sources[conn.localaddr] = []
         if conn.remoteaddr not in sources[conn.localaddr]:
@@ -162,9 +175,8 @@ def main():
 
             sources[conn.localaddr].append(conn.remoteaddr)
 
-            print(add_app_relationship)
-            print(add_host_relationship)
-    print("Connections loaded.")
+    ProgressBar(index, len(all_connections)-1)
+    print("Relationships have been made.")
 
     # Write remaining contents of the buffer.
     n4j_queue.submit()
