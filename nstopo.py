@@ -78,7 +78,7 @@ def ProgressBar(value, endvalue, bar_length = 50):
     spaces = ' ' * (bar_length - len(arrow))
 
     # TODO: Change this to display at least 2 decimal places
-    print("\rPercent: [{0}] {1}%".format(arrow + spaces, int(round(percent * 100))))
+    print("\r{0}: [{1}] {2}%".format(arrow + spaces, int(round(percent * 100))))
 
 def main():
     """
@@ -175,7 +175,7 @@ def main():
 
             sources[conn.localaddr].append(conn.remoteaddr)
 
-    ProgressBar(index, len(all_connections)-1)
+    ProgressBar("Relationships:", index, len(all_connections)-1)
     print("Relationships have been made.")
 
     # Write remaining contents of the buffer.
